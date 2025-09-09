@@ -38,6 +38,29 @@ class IKSolution:
         self.converged_rot_any = torch.zeros_like(self.remaining)
         self.converged_any = torch.zeros_like(self.remaining)
 
+    def clear_tensors(self):
+        """Explicitly clear all tensors to free GPU memory"""
+        if hasattr(self, 'solutions'):
+            del self.solutions
+        if hasattr(self, 'err_pos'):
+            del self.err_pos  
+        if hasattr(self, 'err_rot'):
+            del self.err_rot
+        if hasattr(self, 'converged_pos'):
+            del self.converged_pos
+        if hasattr(self, 'converged_rot'):
+            del self.converged_rot
+        if hasattr(self, 'converged'):
+            del self.converged
+        if hasattr(self, 'remaining'):
+            del self.remaining
+        if hasattr(self, 'converged_pos_any'):
+            del self.converged_pos_any
+        if hasattr(self, 'converged_rot_any'):
+            del self.converged_rot_any
+        if hasattr(self, 'converged_any'):
+            del self.converged_any
+
     def update_remaining_with_keep_mask(self, keep: torch.tensor):
         self.remaining = self.remaining & keep
         return self.remaining
@@ -210,6 +233,11 @@ class InverseKinematics:
         self.err_all = None
         self.err_min = None
         self.no_improve_counter = None
+        # Force garbage collection of GPU memory
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     def sample_configs(self, num_configs: int) -> torch.Tensor:
         if self.config_sampling_method == "uniform":
@@ -314,6 +342,10 @@ class PseudoInverseIK(InverseKinematics):
             q.requires_grad = True
             optimizer = torch.optim.Adam([q], lr=self.lr)
         for i in range(self.max_iterations):
+            # Explicitly clear gradients and intermediate tensors to prevent memory leaks
+            if optimizer is not None and hasattr(q, 'grad') and q.grad is not None:
+                q.grad.zero_()
+            
             with torch.no_grad():
                 # early termination if we're out of problems to solve
                 if not sol.remaining.any():
@@ -336,6 +368,9 @@ class PseudoInverseIK(InverseKinematics):
                 q.grad = -dq
                 optimizer.step()
                 optimizer.zero_grad()
+                # Explicitly delete intermediate gradients to prevent accumulation
+                if hasattr(q, 'grad') and q.grad is not None:
+                    q.grad.detach_()
             else:
                 with torch.no_grad():
                     if self.line_search is not None:
@@ -350,6 +385,15 @@ class PseudoInverseIK(InverseKinematics):
                 self.err_all = dx.squeeze()
                 self.err = self.err_all.norm(dim=-1)
                 sol.update(q, self.err_all, use_keep_mask=self.early_stopping_any_converged)
+                
+                # Clear intermediate tensors to prevent memory accumulation
+                del dx, pos_diff, rot_diff
+                if 'J' in locals():
+                    del J
+                if 'dq' in locals():
+                    del dq
+                if 'm' in locals():
+                    del m
 
                 if self.early_stopping_no_improvement is not None:
                     if self.no_improve_counter is None:

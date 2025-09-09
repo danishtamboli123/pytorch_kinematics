@@ -159,6 +159,11 @@ class Chain:
 
         return self
 
+    def clear_cache(self):
+        """Clear LRU cache to free memory references"""
+        self.get_joint_parameter_names.cache_clear()
+        self.get_frame_indices.cache_clear()
+
     def __str__(self):
         return str(self._root)
 
@@ -348,7 +353,10 @@ class Chain:
 
         frame_names_and_transform3ds = {self.idx_to_frame[frame_idx]: tf.Transform3d(matrix=transform) for
                                         frame_idx, transform in frame_transforms.items()}
-
+        
+        # Clear intermediate tensors to free memory
+        del rev_jnt_transform, pris_jnt_transform, frame_transforms
+        
         return frame_names_and_transform3ds
 
     def ensure_tensor(self, th):
